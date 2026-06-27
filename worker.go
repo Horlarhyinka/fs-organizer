@@ -121,6 +121,19 @@ func isValidFile(p string) error {
 	return nil
 }
 
+func OrganizeNodes(nodes []FileNode, out string) []FileNode {
+	stateMap := make(map[string]string)
+	res := make([]FileNode, 0)
+	for _, node := range nodes {
+		if _, ok := stateMap[node.ext]; !ok {
+			stateMap[node.ext] = path.Join(out, node.ext)
+		}
+		node.fullpath = path.Join(stateMap[node.ext], node.name)
+		res = append(res, node)
+	}
+	return res
+}
+
 func RunWorker(fp, mode string, excludes []string) error {
 	//validate path is valid and exists
 	if err := validateDir(fp); err != nil {
@@ -130,9 +143,8 @@ func RunWorker(fp, mode string, excludes []string) error {
 	nodes, nodesErr := getDirectoryNodes(fp, excludes); if nodesErr != nil {
 		return nodesErr
 	}
-	fmt.Println("file nodes:", nodes)
 	//run through categorization engine
-
+	OrganizeNodes(nodes, "out")
 	//categorization engine returns a new fs-tree
 
 	//copy or move directories to match constructed file tree
