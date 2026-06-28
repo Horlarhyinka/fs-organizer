@@ -17,6 +17,11 @@ type FileNode struct {
 	fullpath  string
 }
 
+type ShiftEntry struct {
+	From string
+	To	 string
+}
+
 func validateDir(p string) error {
 	info, err := os.Lstat(p)
 	if err != nil || !info.IsDir() {
@@ -121,17 +126,22 @@ func isValidFile(p string) error {
 	return nil
 }
 
-func OrganizeNodes(nodes []FileNode, out string) []FileNode {
+func OrganizeNodes(nodes []FileNode, out string) []ShiftEntry {
 	stateMap := make(map[string]string)
-	res := make([]FileNode, 0)
+	res := make([]ShiftEntry, 0)
 	for _, node := range nodes {
 		if _, ok := stateMap[node.ext]; !ok {
 			stateMap[node.ext] = path.Join(out, node.ext)
 		}
-		node.fullpath = path.Join(stateMap[node.ext], node.name)
-		res = append(res, node)
+		res = append(res, ShiftEntry{From: node.fullpath, To: path.Join(stateMap[node.ext], node.name)})
 	}
 	return res
+}
+
+func ShiftFiles(entries []ShiftEntry, mode string) error {
+
+	return nil
+
 }
 
 func RunWorker(fp, mode string, excludes []string) error {
