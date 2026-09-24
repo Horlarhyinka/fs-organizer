@@ -1,0 +1,13 @@
+output:
+  base: ext # ext = use file extension as parent, date = use date as parent folder name
+  mapping:
+    pdf: docs
+    docx: docs
+    html: web
+    css: web
+    js: src
+    go: src
+    "*": default
+log:
+  format: json
+  level: info # debug | info
