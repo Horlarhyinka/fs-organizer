@@ -1,4 +1,4 @@
-package main
+package worker
 
 import (
 	"errors"
@@ -22,6 +22,20 @@ type ShiftEntry struct {
 	To	 string
 }
 
+var (
+	ConflictOptSkip = "skip"
+	ConflictOptRename = "rename"
+	ConflictOptOverwrite = "overwrite"
+)
+
+
+type Option struct {
+	ConflictOpt string
+	DryRun	bool
+	MoveFiles	bool
+	Exclude  []string
+}
+
 func validateDir(p string) error {
 	info, err := os.Lstat(p)
 	if err != nil || !info.IsDir() {
@@ -35,7 +49,7 @@ func validateDir(p string) error {
 
 func readDirChildren(p string) ([]string, error) {
 	fsys := os.DirFS(p)
-	entries, err := fs.ReadDir(fsys, p); if err != nil {
+	entries, err := fs.ReadDir(fsys, "."); if err != nil {
 		return nil, err
 	}
 	children := make([]string, 0)
@@ -59,23 +73,25 @@ func getDirectoryNodes(p string, excludes []string) ([]FileNode, error) {
 		}
 		if isFileErr := isValidFile(fp); isFileErr == nil {
 			fn, fnErr := fileToNode(fp); if fnErr != nil {
-				errs = append(errs, fnErr)
+				fmt.Println("invalid file:", fp)
+				errs = append(errs, fnErr, fnErr)
 				return
 			}
 			nodes = append(nodes, *fn)
 			return
 		}
 		isDirErr := validateDir(fp); if isDirErr != nil {
+			fmt.Println("invalid directory:", fp, isDirErr)
 			errs = append(errs, isDirErr)
 			return 
 		}
 		children, err := readDirChildren(fp); if err != nil {
+			fmt.Println("unable to read children from", fp, err)
 			errs = append(errs, err)
 			return
 		}
-		fmt.Printf("children of %s are %s\n", fp, strings.Join(children, ", "))
 		for _, c := range children {
-			exec(path.Join(fp, c))
+			exec(c)
 		}
 		
 	}
@@ -99,8 +115,13 @@ func fileToNode(p string) (*FileNode, error) {
 	if err != nil {
 		return nil, err
 	}
+	var ext string
+	spl := strings.Split(file.Name(), ".")
+	if len(spl) > 1 {
+		ext = spl[len(spl) - 1]
+	}
 	f := &FileNode{
-		ext:       "",
+		ext:       ext,
 		timestamp: file.ModTime(),
 		name:      file.Name(),
 		fullpath:  p,
@@ -139,25 +160,41 @@ func OrganizeNodes(nodes []FileNode, out string) []ShiftEntry {
 }
 
 func ShiftFiles(entries []ShiftEntry, mode string) error {
-
+	// will use mode to determine if it drops old copy or not later. Just log for now
+	fmt.Printf("sorting files in %s mode", mode)
+	for _, en := range entries {
+		fmt.Println(en.From, "->", en.To)
+		content, err := os.ReadFile(en.From); if err != nil {
+			return err
+		}
+		if err := os.WriteFile(en.To, content, 0755); err != nil {
+			return err
+		}
+	}
 	return nil
-
 }
 
 func RunWorker(fp, mode string, excludes []string) error {
 	//validate path is valid and exists
 	if err := validateDir(fp); err != nil {
+		fmt.Println("invalid directiry:", fp)
 		return err
 	}
 	//construct FileNode list from the current tree
 	nodes, nodesErr := getDirectoryNodes(fp, excludes); if nodesErr != nil {
+		fmt.Println("failed to get tree nodes from", fp)
 		return nodesErr
 	}
 	//run through categorization engine
-	OrganizeNodes(nodes, "out")
+	sens := OrganizeNodes(nodes, "out")
 	//categorization engine returns a new fs-tree
-
+	ShiftFiles(sens, "w")
 	//copy or move directories to match constructed file tree
+
+	return nil
+}
+
+func Organize(in string, out string, opts Option) error {
 
 	return nil
 }

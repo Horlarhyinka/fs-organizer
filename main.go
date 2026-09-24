@@ -1,12 +1,11 @@
 package main
 
-import "fmt"
+import (
+
+	"github.com/Horlarhyinka/fs-organizer/internal/cli"
+)
 
 func main() {
-	RootCmd.Flags().StringArray("exclude", make([]string, 0), "add files to exclude")
-	RootCmd.Flags().String("out", "out", "output directory")
-	if err := RootCmd.Execute(); err != nil {
-		fmt.Println("error:", err)
-	}
+	cli.Init()
 
 }
