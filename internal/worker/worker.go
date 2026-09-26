@@ -49,11 +49,14 @@ type Option struct {
 
 func validateDir(p string) error {
 	info, err := os.Lstat(p)
-	if err != nil || !info.IsDir() {
+	if err != nil {
 		return fmt.Errorf("invalid filepath %q", p)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("invalid filepath %q - symlink detected", p)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a valid directory", p)
 	}
 	return nil
 }
@@ -91,13 +94,12 @@ func getDirectoryNodes(p string, excludes []string) ([]FileNode, error) {
 
 	exec = func(fp string) {
 		if pathMatch(fp, excludes) {
-			fmt.Printf("%s excluded, skipping...", fp)
+			fmt.Printf("%s excluded, skipping...\n", fp)
 			return
 		}
 		if isFileErr := isValidFile(fp); isFileErr == nil {
 			fn, fnErr := fileToNode(fp); if fnErr != nil {
-				fmt.Println("invalid file:", fp)
-				errs = append(errs, fnErr, fnErr)
+				errs = append(errs, fnErr)
 				return
 			}
 			nodes = append(nodes, *fn)
@@ -138,20 +140,12 @@ func fileToNode(p string) (*FileNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	var ext string
-	spl := strings.Split(file.Name(), ".")
-	if len(spl) > 1 {
-		ext = spl[len(spl) - 1]
-	}
+
 	f := &FileNode{
-		ext:       ext,
+		ext:       filepath.Ext(p),
 		timestamp: file.ModTime(),
 		name:      file.Name(),
 		fullpath:  p,
-	}
-	seperated := strings.Split(p, ".")
-	if len(seperated) > 0 {
-		f.ext = seperated[len(seperated)-1]
 	}
 	return f, nil
 }
@@ -170,23 +164,12 @@ func isValidFile(p string) error {
 	return nil
 }
 
-func OrganizeNodes(nodes []FileNode, out string) []ShiftEntry {
-	stateMap := make(map[string]string)
-	res := make([]ShiftEntry, 0)
-	for _, node := range nodes {
-		if _, ok := stateMap[node.ext]; !ok {
-			stateMap[node.ext] = path.Join(out, node.ext)
-		}
-		res = append(res, ShiftEntry{From: node.fullpath, To: path.Join(stateMap[node.ext], node.name)})
-	}
-	return res
-}
-
 func getShiftEntries(nodes []FileNode, out string, base string, mapping map[string]string, onConflict string) ([]ShiftEntry, int) {
 	stateMap := make(map[string]string)
 	res := make([]ShiftEntry, 0)
 	destMem := make(map[string]int, 0)
 	var conflicts int
+	re := regexp.MustCompile(`^(.+)(\.[^.]+)`)
 	for _, node := range nodes {
 		key := ""
 		if base == OutputBaseExt {
@@ -213,7 +196,6 @@ func getShiftEntries(nodes []FileNode, out string, base string, mapping map[stri
 			case ConflictOptSkip:
 				continue
 			case ConflictOptRename:
-				re := regexp.MustCompile(`^(.+)(\.[^.]+)`)
 				destPth = re.ReplaceAllString(destPth, fmt.Sprintf(`${1}(%d)${2}`, existing))
 				fmt.Println("renaming on conflict", destPth)
 			default:
