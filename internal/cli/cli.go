@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"os"
+
+	"github.com/Horlarhyinka/fs-organizer/internal/config"
 	"github.com/Horlarhyinka/fs-organizer/internal/worker"
 	"github.com/spf13/cobra"
 )
@@ -11,6 +14,8 @@ var (
 	dryRun  bool
 	onConflict string
 	excluded []string
+	outputBase string
+	baseMaps map[string]string
 )
 
 var rootCmd = cobra.Command{
@@ -26,7 +31,11 @@ var rootCmd = cobra.Command{
 		}
 		opts := worker.Option{
 			ConflictOpt: onConflict,
-
+			OutputBase: outputBase,
+			DryRun: dryRun,
+			Exclude: excluded,
+			MoveFiles: move,
+			Mappings: baseMaps,
 		}
 		if err := worker.Organize(args[0], outputDir, opts); err != nil {
 			panic(err)
@@ -34,7 +43,7 @@ var rootCmd = cobra.Command{
 	},
 }
 
-func Init() {
+func InitCli(cfg config.Config) {
 	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "", "provide output directory for organized files")
 	rootCmd.Flags().BoolVarP(&move, "move", "m", false, "if true files are moved from source")
 	rootCmd.Flags().BoolVar(&dryRun, "dry-run", false, "logs operations without file movement/copy")
@@ -43,4 +52,12 @@ func Init() {
 		return []string{worker.ConflictOptSkip, worker.ConflictOptRename, worker.ConflictOptOverwrite}, cobra.ShellCompDirectiveNoFileComp
 	})
 	rootCmd.Flags().StringSliceVar(&excluded, "exclude", nil, "define list of excluded filepaths")
+	outputBase = cfg.Output.Base
+	baseMaps = cfg.Output.Mapping
+}
+
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }

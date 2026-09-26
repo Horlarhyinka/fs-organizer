@@ -26,7 +26,7 @@ func LoadConfig() (*Config, error) {
 	dir, err := os.Getwd(); if err != nil {
 		return nil, err
 	}
-	viper.AddConfigPath(path.Join(dir, "./configs/config.yaml"))
+	viper.AddConfigPath(path.Join(dir, "./configs"))
 	viper.SetDefault("output.base", "ext")
 	viper.SetDefault("log.format", "json")
 	viper.SetDefault("log.level", "info")

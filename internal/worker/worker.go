@@ -1,11 +1,14 @@
 package worker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -28,12 +31,20 @@ var (
 	ConflictOptOverwrite = "overwrite"
 )
 
+var (
+	OutputBaseExt = "ext"
+	OutputBaseDate = "date"
+)
+
+const DefaultBaseMapping = "unknown"
 
 type Option struct {
 	ConflictOpt string
 	DryRun	bool
 	MoveFiles	bool
 	Exclude  []string
+	Mappings map[string]string
+	OutputBase string
 }
 
 func validateDir(p string) error {
@@ -41,7 +52,7 @@ func validateDir(p string) error {
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("invalid filepath %q", p)
 	}
-	if info.Mode()&os.ModeSymlink == 1 {
+	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("invalid filepath %q - symlink detected", p)
 	}
 	return nil
@@ -59,16 +70,28 @@ func readDirChildren(p string) ([]string, error) {
 	return children, err
 }
 
+func pathMatch(p string, m []string) bool {
+	for _, v := range m {
+		match, err := filepath.Match(v, p)
+		if err != nil {
+			fmt.Println("invalid file pattern", v, "match skipped for", p)
+			continue
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 func getDirectoryNodes(p string, excludes []string) ([]FileNode, error) {
 	nodes := make([]FileNode, 0)
 	var exec func(fp string)
 	errs := make([]error, 0)
-	excState := make(map[string]bool)
-	for _, v := range excludes {
-		excState[v] = true
-	}
+
 	exec = func(fp string) {
-		if excState[fp] {
+		if pathMatch(fp, excludes) {
+			fmt.Printf("%s excluded, skipping...", fp)
 			return
 		}
 		if isFileErr := isValidFile(fp); isFileErr == nil {
@@ -159,42 +182,111 @@ func OrganizeNodes(nodes []FileNode, out string) []ShiftEntry {
 	return res
 }
 
-func ShiftFiles(entries []ShiftEntry, mode string) error {
-	// will use mode to determine if it drops old copy or not later. Just log for now
-	fmt.Printf("sorting files in %s mode", mode)
-	for _, en := range entries {
-		fmt.Println(en.From, "->", en.To)
-		content, err := os.ReadFile(en.From); if err != nil {
-			return err
+func getShiftEntries(nodes []FileNode, out string, base string, mapping map[string]string, onConflict string) ([]ShiftEntry, int) {
+	stateMap := make(map[string]string)
+	res := make([]ShiftEntry, 0)
+	destMem := make(map[string]int, 0)
+	var conflicts int
+	for _, node := range nodes {
+		key := ""
+		if base == OutputBaseExt {
+			m, ok := mapping[strings.ToLower(node.ext)]
+			if ok {
+				key = m
+			}else{
+				key = strings.ToLower(node.ext)
+			}
 		}
-		if err := os.WriteFile(en.To, content, 0755); err != nil {
-			return err
+		if base == OutputBaseDate {
+			key = strings.Split(node.timestamp.String(), " ")[0]
 		}
+		if key == "" {
+			key = DefaultBaseMapping
+		}
+		if _, ok := stateMap[key]; !ok {
+			stateMap[key] = path.Join(out, key)
+		}
+		destPth := path.Join(stateMap[key], node.name)
+		existing := destMem[destPth]
+		if existing > 0 {
+			switch onConflict {
+			case ConflictOptSkip:
+				continue
+			case ConflictOptRename:
+				re := regexp.MustCompile(`^(.+)(\.[^.]+)`)
+				destPth = re.ReplaceAllString(destPth, fmt.Sprintf(`${1}(%d)${2}`, existing))
+				fmt.Println("renaming on conflict", destPth)
+			default:
+			}
+			conflicts++
+		}
+		res = append(res, ShiftEntry{From: node.fullpath, To: destPth})
+		destMem[destPth] += 1
+	}
+	return res, conflicts
+}
+
+
+func logEntries(entries []ShiftEntry) {
+	for i, en := range entries {
+		fmt.Printf("%d. %s => %s\n", i+1, en.From, en.To)
+	}
+}
+
+func shiftFiles(_ context.Context, entries []ShiftEntry, deleteSource bool) error {
+	var failed int
+	var errGrp error
+	for _, se := range entries {
+		if err := moveFile(se.From, se.To, deleteSource); err != nil {
+			errGrp = errors.Join(errGrp, err)
+			failed++
+		}
+	}
+	fmt.Printf("processed %d of %d files\n", len(entries) - failed, len(entries))
+	if errGrp != nil {
+		fmt.Println(errGrp)
 	}
 	return nil
 }
 
-func RunWorker(fp, mode string, excludes []string) error {
-	//validate path is valid and exists
-	if err := validateDir(fp); err != nil {
-		fmt.Println("invalid directiry:", fp)
+func moveFile(from, to string, deleteSource bool) error {
+	cnt, err := os.ReadFile(from); if err != nil {
 		return err
 	}
-	//construct FileNode list from the current tree
-	nodes, nodesErr := getDirectoryNodes(fp, excludes); if nodesErr != nil {
-		fmt.Println("failed to get tree nodes from", fp)
-		return nodesErr
+	destDir := filepath.Dir(to)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
 	}
-	//run through categorization engine
-	sens := OrganizeNodes(nodes, "out")
-	//categorization engine returns a new fs-tree
-	ShiftFiles(sens, "w")
-	//copy or move directories to match constructed file tree
 
+	if err := os.WriteFile(to, cnt, 0644); err != nil {
+		return err
+	}
+	if deleteSource {
+		err = os.Remove(from); if err != nil {
+			fmt.Printf("failed to remove file %s - default to copy mode: %v", from, err)
+		}
+	}
 	return nil
 }
 
-func Organize(in string, out string, opts Option) error {
 
-	return nil
+func Organize(in string, out string, opts Option) error {
+	fmt.Println("organizing", in)
+	//validate path is valid and exists
+	if err := validateDir(in); err != nil {
+		return fmt.Errorf("invalid input path %s: %w", in, err)
+	}
+
+	//construct FileNode list from the current tree
+	nodes, err := getDirectoryNodes(in, opts.Exclude); if err != nil {
+		return err
+	}
+	//get shift entries
+	entries, conflicts := getShiftEntries(nodes, out, opts.OutputBase, opts.Mappings, opts.ConflictOpt)
+	if opts.DryRun {
+		logEntries(entries)
+		fmt.Printf("Total: %d, Conflicts: %d (on-conflict = %s)", len(entries), conflicts, opts.ConflictOpt)
+		return nil
+	}
+	return shiftFiles(context.Background(), entries, opts.MoveFiles)
 }
